@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>AutoCardSeller</AssemblyName>
+    <RootNamespace>ArchiSteamFarm.CustomPlugins.AutoCardSeller</RootNamespace>
+    <Version>1.0.0.0</Version>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="ArchiSteamFarm">
+      <HintPath>..\refs\ArchiSteamFarm.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="SteamKit2">
+      <HintPath>..\refs\SteamKit2.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="System.Composition.AttributedModel">
+      <HintPath>..\refs\System.Composition.AttributedModel.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+</Project>

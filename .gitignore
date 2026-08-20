@@ -1,0 +1,17 @@
+# 编译产物
+bin/
+obj/
+out/
+*.pdb
+*.dll
+*.deps.json
+*.runtimeconfig.json
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# 系统文件
+Thumbs.db
+.DS_Store
