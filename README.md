@@ -33,6 +33,7 @@ AutoCardSeller 是一个 [ArchiSteamFarm (ASF)](https://github.com/JustArchiNET/
 | `AutoCardSellerKeepCount` | uint | 0 | 每种卡保留数量 |
 | `AutoCardSellerHistoryDays` | uint | 7 | 历史均价回退窗口（天） |
 | `AutoCardSellerUndercutPercent` | uint | 0 | 比市场最低价再低 N% 挂单 |
+| `AutoCardSellerFeePercent` | uint | 15 | 手续费率（%），用于估算到手价与最低价保护 |
 
 示例：
 
@@ -52,21 +53,24 @@ AutoCardSeller 是一个 [ArchiSteamFarm (ASF)](https://github.com/JustArchiNET/
 
 ## 定价逻辑
 
-1. 查 `priceoverview` 获取该卡当前市场**最低挂单价**（买家支付价）
-2. **挂单价** = 最低价 × (1 - 压价比例)
-3. **到手价** = 挂单价 × 0.85（扣除 Steam 约 15% 手续费）
+1. 查 `priceoverview` 获取该卡当前市场**最低挂单价**（买家支付价，多币种小数格式均正确解析）
+2. **挂单价** = 最低价 × (1 - 压价比例)，即买家支付价
+3. **到手价** = 挂单价 × (1 - 手续费率)，仅用于展示与最低到手价保护
 4. 查不到最低价时，回退到历史成交均价
+5. 每种卡处理间隔 0.5 秒，降低市场接口风控概率
 
 ## 编译
 
 - 需要 .NET 10 SDK
 - 需引用 ASF 的 `ArchiSteamFarm.dll` 与 `SteamKit2.dll`（见 `.csproj` 中的 `HintPath`）
-- 从 [ASF Releases](https://github.com/JustArchiNET/ArchiSteamFarm/releases) 下载 generic 包获取上述 dll，放入 `refs/` 目录
+- 从 [ASF Releases](https://github.com/JustArchiNET/ArchiSteamFarm/releases) 下载 generic 包获取上述 dll，放入仓库**同级**的 `../refs/` 目录（与 `.csproj` 的 `HintPath` 一致，可避免误提交）
 - 编译命令：`dotnet build -c Release -o out`
 
 ## 许可证
 
 [Apache License 2.0](LICENSE)
+
+依赖：[ArchiSteamFarm](https://github.com/JustArchiNET/ArchiSteamFarm)（Apache-2.0）、[SteamKit2](https://github.com/SteamRE/SteamKit)（LGPL-2.1，仅编译期引用，不分发）
 
 ## 免责声明
 
