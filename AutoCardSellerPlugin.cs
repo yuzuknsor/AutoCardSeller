@@ -4,6 +4,7 @@ using System.Composition;
 using System.Globalization;
 using System.Linq;
 using System.Net;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
@@ -181,12 +182,17 @@ internal sealed class AutoCardSellerPlugin : IASF, IBot, IBotCommand2, IBotModul
 					continue;
 				}
 
-				if (await SellAsset(bot, asset, price.ReceiveCents).ConfigureAwait(false)) {
+				if (await SellAsset(bot, asset, price.ListingCents).ConfigureAwait(false)) {
 					soldCount++;
 					totalCents += price.ReceiveCents;
 				} else {
 					failedCount++;
 				}
+			}
+
+			// 组间节流，降低市场接口触发风控的概率
+			if (currentIndex < totalGroups) {
+				await Task.Delay(500).ConfigureAwait(false);
 			}
 		}
 
@@ -211,7 +217,7 @@ internal sealed class AutoCardSellerPlugin : IASF, IBot, IBotCommand2, IBotModul
 			uint referenceCents = ToCents(lowest.Value);
 			uint listingCents = ApplyUndercut(referenceCents, state.UndercutPercent);
 
-			return new SellPrice(referenceCents, listingCents, ToReceiveCents(listingCents));
+			return new SellPrice(referenceCents, listingCents, ToReceiveCents(listingCents, state.FeePercent));
 		}
 
 		// 兜底：历史均价（买家支付价）
@@ -223,7 +229,7 @@ internal sealed class AutoCardSellerPlugin : IASF, IBot, IBotCommand2, IBotModul
 
 		uint listingFallback = ApplyUndercut(avgCents.Value, state.UndercutPercent);
 
-		return new SellPrice(avgCents.Value, listingFallback, ToReceiveCents(listingFallback));
+		return new SellPrice(avgCents.Value, listingFallback, ToReceiveCents(listingFallback, state.FeePercent));
 	}
 
 	private static uint ToCents(decimal price) => (uint) ((price * 100m) + 0.5m);
@@ -236,10 +242,15 @@ internal sealed class AutoCardSellerPlugin : IASF, IBot, IBotCommand2, IBotModul
 		return (uint) ((cents * (100 - percent) / 100m) + 0.5m);
 	}
 
-	private static uint ToReceiveCents(uint listingCents) => (uint) ((listingCents * 0.85m) + 0.5m);
+	// sellitem 的 price 为买家支付价（含手续费）；费率仅用于估算到手价与最低价保护
+	private static uint ToReceiveCents(uint listingCents, uint feePercent) => (uint) ((listingCents * (100 - feePercent) / 100m) + 0.5m);
 
 	private static string FormatCents(uint cents) => $"{cents / 100}.{cents % 100:D2}";
 
+	/// <summary>
+	/// 挂单价格组：挂单价即买家支付价（sellitem 的 price 语义）；
+	/// 到手价为按可配费率的估算值，仅用于展示与最低价保护。
+	/// </summary>
 	private readonly record struct SellPrice(uint ReferenceCents, uint ListingCents, uint ReceiveCents);
 
 	private static async Task<decimal?> GetLowestPrice(Bot bot, string marketHashName) {
@@ -264,20 +275,53 @@ internal sealed class AutoCardSellerPlugin : IASF, IBot, IBotCommand2, IBotModul
 		return ParsePriceText(response.Content.LowestPrice);
 	}
 
+	// Steam 返回的本地化价格文本：小数分隔符随钱包货币变化（¥ 3.50 / 3,50€ / 1.234,56）
+	// 规则：点与逗号同时出现时，最后出现者为小数分隔符、另一个为分组符；
+	// 仅一种出现 ≥2 次为分组符；出现 1 次为小数分隔符
 	private static decimal? ParsePriceText(string? text) {
 		if (string.IsNullOrEmpty(text)) {
 			return null;
 		}
 
-		string digits = "";
+		StringBuilder builder = new(text.Length);
 
 		foreach (char character in text) {
-			if (((character >= '0') && (character <= '9')) || (character == '.')) {
-				digits += character;
+			if (((character >= '0') && (character <= '9')) || (character == '.') || (character == ',')) {
+				builder.Append(character);
 			}
 		}
 
-		if ((digits.Length == 0) || !decimal.TryParse(digits, NumberStyles.Number, CultureInfo.InvariantCulture, out decimal value) || (value <= 0)) {
+		string digits = builder.ToString();
+
+		if (digits.Length == 0) {
+			return null;
+		}
+
+		int lastDot = digits.LastIndexOf('.');
+		int lastComma = digits.LastIndexOf(',');
+
+		char decimalSeparator;
+		char groupSeparator;
+
+		if ((lastDot >= 0) && (lastComma >= 0)) {
+			decimalSeparator = lastDot > lastComma ? '.' : ',';
+		} else if (lastDot >= 0) {
+			decimalSeparator = digits.Count(static c => c == '.') == 1 ? '.' : '\0';
+		} else if (lastComma >= 0) {
+			decimalSeparator = digits.Count(static c => c == ',') == 1 ? ',' : '\0';
+		} else {
+			decimalSeparator = '\0';
+		}
+
+		groupSeparator = decimalSeparator == '.' ? ',' : '.';
+
+		string normalized = digits.Replace(groupSeparator.ToString(), null);
+
+		if (decimalSeparator != '\0') {
+			normalized = normalized.Replace(decimalSeparator, '.');
+		}
+
+		if (!decimal.TryParse(normalized, NumberStyles.Number, CultureInfo.InvariantCulture, out decimal value) || (value <= 0)) {
 			return null;
 		}
 
@@ -421,6 +465,7 @@ internal sealed class AutoCardSellerPlugin : IASF, IBot, IBotCommand2, IBotModul
 		return string.Join(" | ", prices.Take(3).Select(static point => point.Count >= 2 ? $"{point[0]},{point[1]}" : string.Join(",", point)));
 	}
 
+	// Steam sellitem 的 price 字段为买家支付价（含手续费）
 	private static async Task<bool> SellAsset(Bot bot, Asset asset, uint priceCents) {
 		ArgumentNullException.ThrowIfNull(bot);
 		ArgumentNullException.ThrowIfNull(asset);
@@ -443,7 +488,7 @@ internal sealed class AutoCardSellerPlugin : IASF, IBot, IBotCommand2, IBotModul
 		}
 
 		if (response.Content.Success) {
-			bot.ArchiLogger.LogGenericInfo($"已挂单出售 {asset.Description?.MarketHashName}（assetID: {asset.AssetID}）@ {priceCents} 分到手价。");
+			bot.ArchiLogger.LogGenericInfo($"已挂单出售 {asset.Description?.MarketHashName}（assetID: {asset.AssetID}）@ 买家价 {priceCents} 分。");
 
 			return true;
 		}
@@ -493,8 +538,10 @@ internal sealed class AutoCardSellerPlugin : IASF, IBot, IBotCommand2, IBotModul
 		internal uint KeepCount;
 		internal uint HistoryDays = 7;
 		internal uint UndercutPercent;
+		internal uint FeePercent = 15;
 
 		private Timer? Timer;
+		private uint TimerIntervalHours;
 		private int Running;
 
 		internal void LoadConfig(IReadOnlyDictionary<string, JsonElement>? properties) {
@@ -529,19 +576,36 @@ internal sealed class AutoCardSellerPlugin : IASF, IBot, IBotCommand2, IBotModul
 			if (properties.TryGetValue("AutoCardSellerUndercutPercent", out JsonElement undercut) && undercut.TryGetUInt32(out uint undercutValue) && (undercutValue <= 90)) {
 				UndercutPercent = undercutValue;
 			}
+
+			if (properties.TryGetValue("AutoCardSellerFeePercent", out JsonElement fee) && fee.TryGetUInt32(out uint feeValue)) {
+				FeePercent = Math.Min(feeValue, 30);
+			}
 		}
 
 		internal void EnsureTimerStarted(Bot bot) {
-			if (Timer != null) {
+			if ((Timer != null) && (TimerIntervalHours == AutoSellIntervalHours)) {
 				return;
 			}
 
+			// 配置的周期变化时重建定时器
+			StopTimer();
+			TimerIntervalHours = AutoSellIntervalHours;
+
 			Timer = new Timer(
-				_ => _ = RunSellCycle(bot, this, false),
+				_ => _ = SafeAutoSell(bot, this),
 				null,
 				TimeSpan.FromSeconds(30), // 延迟 30 秒，等待机器人登录
 				TimeSpan.FromHours(AutoSellIntervalHours) // 周期
 			);
+		}
+
+		// 定时器回调的顶层异常防护：fire-and-forget 任务中的异常若不捕获将静默丢失
+		private static async Task SafeAutoSell(Bot bot, BotState state) {
+			try {
+				await RunSellCycle(bot, state, preview: false).ConfigureAwait(false);
+			} catch (Exception e) {
+				bot.ArchiLogger.LogGenericError($"[AutoCardSeller] 自动出售周期异常：{e}");
+			}
 		}
 
 		internal void StopTimer() {
