@@ -1,8 +1,5 @@
 # AutoCardSeller
 
-> **⚠️ 本项目已归档（Archived）/ 停止维护**
->
-> 本仓库已进入只读归档状态，不再接受任何功能更新、修复或 issue 请求。
 > 代码仅供学习参考，请自行评估风险后使用，一切后果由使用者自负。
 
 AutoCardSeller 是一个 [ArchiSteamFarm (ASF)](https://github.com/JustArchiNET/ArchiSteamFarm) 插件，用于自动出售 Steam 集换式卡牌。
